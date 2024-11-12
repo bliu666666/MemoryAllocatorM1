@@ -10,39 +10,60 @@ typedef struct block_header {
     size_t size;
 } block_header_t;
 
-void *my_malloc(size_t size)
-{
-    // 获取系统页面大小
+typedef struct free_block {
+    size_t size;
+    struct free_block* next;
+} free_block_t;
+
+free_block_t* free_list = NULL;
+
+void* my_malloc(size_t size) {
+    size_t total_size = sizeof(size_t) + size; // 包括块头的总大小
+    free_block_t* best_fit = NULL;
+    free_block_t** best_fit_prev = NULL;
+    free_block_t** current = &free_list;
+
+    // 在自由链表中查找最优块
+    while (*current != NULL) {
+        if ((*current)->size >= total_size) {
+            if (best_fit == NULL || (*current)->size < best_fit->size) {
+                best_fit = *current;
+                best_fit_prev = current;
+            }
+        }
+        current = &(*current)->next;
+    }
+
+    // 如果找到了合适的块
+    if (best_fit != NULL) {
+        *best_fit_prev = best_fit->next; // 从链表中移除最佳块
+        return (void*)((char*)best_fit + sizeof(size_t));
+    }
+
+    // 如果没有找到合适的块，则使用 mmap 分配新内存
     size_t page_size = sysconf(_SC_PAGESIZE);
-    // 计算需要分配的内存大小，包含块头和用户请求的大小
-    size_t total_size = sizeof(block_header_t) + size;
-    // 向上对齐到页面大小的整数倍
-    size_t alloc_size = ((total_size + page_size - 1) / page_size) * page_size;
+    size_t alloc_size = (total_size + page_size - 1) & ~(page_size - 1);
 
-    // 使用 mmap 分配内存
-    void* ptr = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE,MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    // 在块头中存储分配大小
-    block_header_t* header = (block_header_t*)ptr;
-    header->size = alloc_size;
+    void* ptr = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (ptr == MAP_FAILED) {
+        perror("mmap failed");
+        return NULL;
+    }
 
-    // 返回指向用户数据的指针
-    return (void*)((char*)ptr + sizeof(block_header_t));
-
+    *((size_t*)ptr) = alloc_size;
+    return (void*)((char*)ptr + sizeof(size_t));
 }
 
 void my_free(void* ptr) {
-    if (ptr == NULL) {
-        return;
-    }
+    if (ptr == NULL) return;
 
-    // 计算块头的地址
-    block_header_t* header = (block_header_t*)((char*)ptr - sizeof(block_header_t));
+    // 获取块头信息
+    size_t* block_start = (size_t*)((char*)ptr - sizeof(size_t));
+    size_t alloc_size = *block_start;
 
-    // 获取分配的大小
-    size_t alloc_size = header->size;
-
-    // 使用 munmap 释放内存
-    if (munmap((void*)header, alloc_size) == -1) {
-        perror("munmap failed");
-    }
+    // 将释放的块插入到自由链表中
+    free_block_t* new_block = (free_block_t*)block_start;
+    new_block->size = alloc_size;
+    new_block->next = free_list;
+    free_list = new_block;
 }

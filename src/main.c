@@ -1,4 +1,4 @@
-#include "myAllocator.c"
+#include "perf_cmp.c"
 
 int main(int argc,char **argv) {
     if (argc!=2)
@@ -26,6 +26,12 @@ int main(int argc,char **argv) {
     // Free allocated memory
     my_free(ptr);
     printf("Memory freed successfully.\n");
+
+    printf("Testing custom allocator (my_malloc/my_free)...\n");
+    test_my_allocator_performance();
+
+    printf("Testing system allocator (malloc/free)...\n");
+    test_system_allocator_performance();
 
     return 0;
 }

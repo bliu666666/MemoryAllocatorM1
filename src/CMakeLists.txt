@@ -1,9 +1,9 @@
-# 创建 myAllocator 库
+# Create myAllocator library and perf_cmp library
 add_library(myAllocator myAllocator.c)
 add_library(perf_cmp perf_cmp.c)
 
-# 创建主程序可执行文件 main
+# Create the main program executable file main
 add_executable(main main.c)
 
-# 链接 myAllocator 库到 main 可执行文件
+# Link the myAllocator library and the perf_cmp library into the main executable
 target_link_libraries(main myAllocator perf_cmp)

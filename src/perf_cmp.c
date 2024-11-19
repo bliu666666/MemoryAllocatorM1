@@ -3,19 +3,19 @@
 #include <time.h>
 #include "myAllocator.c"
 
-#define NUM_ALLOCATIONS 100000  // 设置测试的分配次数
-#define ALLOCATION_SIZE 1024    // 每次分配的内存大小（1KB）
+#define NUM_ALLOCATIONS 100000  // Set the number of allocations for the test
+#define ALLOCATION_SIZE 1024    // The size of memory allocated each time (1KB)
 
-// 计算时间差
+// Calculate time difference
 double calculate_time(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
-// 测试 my_malloc/my_free 的性能
+// Testing the performance of my_malloc/my_free
 void test_my_allocator_performance() {
     struct timespec start, end;
 
-    // 开始计时
+    // Start timing
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < NUM_ALLOCATIONS; i++) {
@@ -27,18 +27,18 @@ void test_my_allocator_performance() {
         my_free(ptr);
     }
 
-    // 结束计时
+    // End timing
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_spent = calculate_time(start, end);
 
     printf("my_malloc/my_free: %d allocations of %d bytes took %f seconds\n", NUM_ALLOCATIONS, ALLOCATION_SIZE, time_spent);
 }
 
-// 测试 malloc/free 的性能
+// Testing the performance of malloc/free
 void test_system_allocator_performance() {
     struct timespec start, end;
 
-    // 开始计时
+    // Start timing
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < NUM_ALLOCATIONS; i++) {
@@ -50,7 +50,7 @@ void test_system_allocator_performance() {
         free(ptr);
     }
 
-    // 结束计时
+    // End timing
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_spent = calculate_time(start, end);
 

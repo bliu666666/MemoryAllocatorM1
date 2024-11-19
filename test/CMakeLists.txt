@@ -1,9 +1,9 @@
-# 创建测试可执行文件 testAllocator
+# Create a test executable testAllocator
 add_executable(testAllocator test.c)
 
-# 链接 myAllocator 库和 cmocka 库到测试可执行文件
-target_link_libraries(testAllocator myAllocator cmocka)
+# Link myAllocator library, cmocka library and pthread library into the test executable
+target_link_libraries(testAllocator myAllocator cmocka pthread)
 
-# 启用测试并定义测试目标
+# Enable testing and define test goals
 enable_testing()
 add_test(NAME MyAllocatorTest COMMAND testAllocator)

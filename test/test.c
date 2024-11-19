@@ -3,6 +3,15 @@
 #include <setjmp.h>
 #include <cmocka.h>
 #include "../src/myAllocator.c"
+#include <pthread.h>
+
+static void* thread_test(void* arg) {
+    (void)arg;
+    void* ptr = my_malloc(64);
+    assert_non_null(ptr);
+    my_free(ptr);
+    return NULL;
+}
 
 // Tests allocating and freeing fixed-size memory blocks
 static void test_fixed_block_allocation(void **state) {
@@ -48,11 +57,39 @@ static void test_zero_block_allocation(void **state) {
     assert_null(ptr);
 }
 
+// Testing the independence of multithreaded Arena
+static void test_multithread_allocation(void **state) {
+    void *ptr1 = my_malloc(32);
+    void *ptr2 = my_malloc(64);
+    void *ptr3 = my_malloc(128);
+
+    assert_non_null(ptr1);
+    assert_non_null(ptr2);
+    assert_non_null(ptr3);
+
+    my_free(ptr1);
+    my_free(ptr2);
+    my_free(ptr3);
+}
+
+//Test thread-local Arena independence (requires multithreading)
+static void test_thread_arena(void **state) {
+    pthread_t threads[4];
+    for (int i = 0; i < 4; i++) {
+        pthread_create(&threads[i], NULL, thread_test, NULL);
+    }
+    for (int i = 0; i < 4; i++) {
+        pthread_join(threads[i], NULL);
+    }
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
             cmocka_unit_test(test_fixed_block_allocation),
             cmocka_unit_test(test_large_block_allocation),
             cmocka_unit_test(test_zero_block_allocation),
+            cmocka_unit_test(test_multithread_allocation),
+            cmocka_unit_test(test_thread_arena),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

@@ -3,23 +3,20 @@
 #include <time.h>
 #include "myAllocator.c"
 
-#define NUM_ALLOCATIONS 100000  // Set the number of allocations for the test
-#define ALLOCATION_SIZE 1024    // The size of memory allocated each time (1KB)
-
 // Calculate time difference
 double calculate_time(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
 // Testing the performance of my_malloc/my_free
-void test_my_allocator_performance() {
+void test_my_allocator_performance(int num_allocations,size_t allocation_size) {
     struct timespec start, end;
 
     // Start timing
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    for (int i = 0; i < NUM_ALLOCATIONS; i++) {
-        void* ptr = my_malloc(ALLOCATION_SIZE);
+    for (int i = 0; i < num_allocations; i++) {
+        void* ptr = my_malloc(allocation_size);
         if (ptr == NULL) {
             fprintf(stderr, "my_malloc failed on iteration %d\n", i);
             exit(1);
@@ -31,18 +28,18 @@ void test_my_allocator_performance() {
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_spent = calculate_time(start, end);
 
-    printf("my_malloc/my_free: %d allocations of %d bytes took %f seconds\n", NUM_ALLOCATIONS, ALLOCATION_SIZE, time_spent);
+    printf("my_malloc/my_free: %d allocations of %zu bytes took %f seconds\n", num_allocations, allocation_size, time_spent);
 }
 
 // Testing the performance of malloc/free
-void test_system_allocator_performance() {
+void test_system_allocator_performance(int num_allocations,size_t allocation_size) {
     struct timespec start, end;
 
     // Start timing
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    for (int i = 0; i < NUM_ALLOCATIONS; i++) {
-        void* ptr = malloc(ALLOCATION_SIZE);
+    for (int i = 0; i < num_allocations; i++) {
+        void* ptr = malloc(allocation_size);
         if (ptr == NULL) {
             fprintf(stderr, "malloc failed on iteration %d\n", i);
             exit(1);
@@ -54,5 +51,5 @@ void test_system_allocator_performance() {
     clock_gettime(CLOCK_MONOTONIC, &end);
     double time_spent = calculate_time(start, end);
 
-    printf("malloc/free: %d allocations of %d bytes took %f seconds\n", NUM_ALLOCATIONS, ALLOCATION_SIZE, time_spent);
+    printf("malloc/free: %d allocations of %zu bytes took %f seconds\n", num_allocations, allocation_size, time_spent);
 }

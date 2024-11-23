@@ -58,22 +58,22 @@ static void test_zero_block_allocation(void **state) {
 }
 
 // Testing the independence of multithreaded Arena
-static void test_multithread_allocation(void **state) {
+static void test_thread_cache(void **state) {
     void *ptr1 = my_malloc(32);
-    void *ptr2 = my_malloc(64);
-    void *ptr3 = my_malloc(128);
+    void *ptr2 = my_malloc(32);
 
     assert_non_null(ptr1);
     assert_non_null(ptr2);
-    assert_non_null(ptr3);
 
     my_free(ptr1);
     my_free(ptr2);
-    my_free(ptr3);
+
+    void *ptr3 = my_malloc(32);
+    assert_ptr_equal(ptr3, ptr2); // Should be allocated from the thread cache
 }
 
 //Test thread-local Arena independence (requires multithreading)
-static void test_thread_arena(void **state) {
+static void test_multithread_cache(void **state) {
     pthread_t threads[4];
     for (int i = 0; i < 4; i++) {
         pthread_create(&threads[i], NULL, thread_test, NULL);
@@ -88,8 +88,8 @@ int main(void) {
             cmocka_unit_test(test_fixed_block_allocation),
             cmocka_unit_test(test_large_block_allocation),
             cmocka_unit_test(test_zero_block_allocation),
-            cmocka_unit_test(test_multithread_allocation),
-            cmocka_unit_test(test_thread_arena),
+            cmocka_unit_test(test_thread_cache),
+            cmocka_unit_test(test_multithread_cache),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

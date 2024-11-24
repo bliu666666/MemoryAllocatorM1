@@ -19,17 +19,21 @@ int main(int argc,char **argv) {
 
     printf("Memory allocated at address %p\n", ptr);
 
-    // Write and Read
-    char* data = (char*) ptr;
+    // Write and read data
+    char* data = (char*)ptr;
     for (size_t i = 0; i < size; i++) {
-        data[i] = (char) (i % 256);
+        data[i] = (char)(i % 256);
     }
-    printf("Memory write data: %s.\n",data);
+    printf("Memory write completed.\n");
 
-    // Free allocated memory
+    // Free the allocated memory
     my_free(ptr);
     printf("Memory freed successfully.\n");
 
+    // Detect memory leaks
+    check_memory_leaks();
+
+    // Test the performance of different allocators
     printf("Testing custom allocator (my_malloc/my_free)...\n");
     test_my_allocator_performance(num_allocations,size);
 

@@ -1,14 +1,17 @@
 #include <sys/mman.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <bits/mman-linux.h>
 #include <unistd.h>
 #include <string.h>
 #include <stddef.h>
+#include <pthread.h>
+#include <stdint.h>
 
 #define MAX_BLOCK_CLASSES 10   // The maximum number of block types supported, for example: 8B, 16B, ..., 4096B
 #define PAGE_SIZE 4096         // Assume the system page size is 4096 bytes
 #define THREAD_CACHE_MAX_BLOCKS 64 // Maximum number of blocks cached per thread
+#define ALIGNMENT 16 // Define the number of bytes for memory alignment (typically 16 or 8, depending on the system)
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1)) // Calculate the aligned size
 
 typedef struct thread_cache {
     struct block* free_list[MAX_BLOCK_CLASSES];// Free list for each block size
@@ -29,6 +32,18 @@ static const size_t block_sizes[MAX_BLOCK_CLASSES] = {8, 16, 32, 64, 128, 256, 5
 
 // Global free list
 static block_t *global_free_list[MAX_BLOCK_CLASSES] = {NULL};
+// Global mutex lock to ensure thread-safe memory allocation
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Define the structure for tracking allocated memory
+typedef struct allocated_block {
+    void* ptr; // Pointer to the allocated memory
+    uint32_t size; // Size of the allocated memory
+    struct allocated_block* next; // Pointer to the next allocated block
+} allocated_block_t;
+
+// Pointer to the head of the allocated memory list
+allocated_block_t* allocated_list = NULL;
 
 // Find the corresponding block type index according to the size
 static int get_block_class(size_t size) {
@@ -40,20 +55,46 @@ static int get_block_class(size_t size) {
     return -1;
 }
 
-// Allocate new memory blocks from the global pool
-static block_t *allocate_global_block(int class_index) {
-    size_t block_size = block_sizes[class_index] + sizeof(block_t); // The total size of the block memory (block header + data area)
+// Function to add an allocated block record
+void add_allocated_block(void* ptr, uint32_t size) {
+    allocated_block_t* new_block = (allocated_block_t*)malloc(sizeof(allocated_block_t));
+    if (new_block == NULL) {
+        perror("Failed to allocate memory for tracking");
+        return;
+    }
+    new_block->ptr = ptr;
+    new_block->size = size;
+    new_block->next = allocated_list;
+    allocated_list = new_block;
+}
 
-    void* ptr = mmap(NULL, block_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+// Function to remove an allocated block record
+void remove_allocated_block(void* ptr) {
+    allocated_block_t** current = &allocated_list;
+    while (*current != NULL) {
+        if ((*current)->ptr == ptr) {
+            allocated_block_t* to_remove = *current;
+            *current = (*current)->next;
+            free(to_remove);
+            return;
+        }
+        current = &(*current)->next;
+    }
+    fprintf(stderr, "Warning: Attempt to free untracked memory at %p\n", ptr);
+}
+
+// Allocate oversized blocks
+static void *allocate_large_block(size_t size) {
+    size_t total_size = ALIGN(size + sizeof(block_t));
+    void *ptr = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (ptr == MAP_FAILED) {
         perror("mmap failed");
-        exit(1);
+        return NULL;
     }
-
-    block_t *block = (block_t*)ptr;
-    block->size = block_sizes[class_index];
-    block->next = NULL;
-    return block;
+    block_t *block = (block_t *)ptr;
+    block->size = size;
+    add_allocated_block(ptr, total_size);
+    return (void *)((char *)ptr + sizeof(block_t));
 }
 
 // Allocating memory from the thread cache
@@ -81,66 +122,84 @@ static int cache_block_to_thread(int class_index, block_t *block) {
 }
 
 void* my_malloc(size_t size) {
+    pthread_mutex_lock(&lock);
     if (size == 0) {
+        pthread_mutex_unlock(&lock);
         return NULL; // Unable to allocate 0 bytes
     }
 
+    size = ALIGN(size); // Alignment size
     int class_index = get_block_class(size);
     if (class_index == -1) {
-        // If the supported block size is exceeded, call mmap directly to allocate
-        size_t total_size = size + sizeof(block_t);
-        void* ptr = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (ptr == MAP_FAILED) {
-            perror("mmap failed");
-            return NULL;
+        // Handle oversized allocations using allocate_large_block
+        void *result = allocate_large_block(size);
+        if (result) {
+            add_allocated_block(result, size); // Track the allocation
         }
-
-        // Setup block header for the oversized block
-        block_t *block = (block_t *)ptr;
-        block->size = size; // Store the requested size
-        block->next = NULL; // Oversized blocks are not part of a list
-
-        // Return the data pointer after the block header
-        return (void *)((char *)ptr + sizeof(block_t));
+        pthread_mutex_unlock(&lock);
+        return result;
     }
 
     // Try allocating from the thread cache
     void *ptr = allocate_from_thread_cache(class_index);
-    if (ptr != NULL) {
-        return ptr;
+    if (!ptr) {
+        // If thread cache is empty, check the global free list
+        block_t *block = global_free_list[class_index];
+        if (block) {
+            global_free_list[class_index] = block->next; // Remove the block from global free list
+            ptr = (void *)((char *)block + sizeof(block_t));
+        } else {
+            // Allocate a new block if no free blocks are available
+            size_t total_size = ALIGN(block_sizes[class_index] + sizeof(block_t));
+            block_t *new_block = (block_t *)allocate_large_block(total_size);
+            if (new_block) {
+                new_block->size = block_sizes[class_index];
+                ptr = (void *)((char *)new_block + sizeof(block_t));
+            }
+        }
     }
 
-    // Try allocating from the global pool
-    block_t *global_block = global_free_list[class_index];
-    if (global_block != NULL) {
-        global_free_list[class_index] = global_block->next;
-        return (void*)((char*)global_block + sizeof(block_t));
+    if (ptr) {
+        add_allocated_block(ptr, size); // Track the allocation
     }
 
-    // Allocate new blocks from the system
-    block_t *new_block = allocate_global_block(class_index);
-    return (void*)((char*)new_block + sizeof(block_t));
+    pthread_mutex_unlock(&lock);
+    return ptr;
 }
 
 void my_free(void* ptr) {
     if (ptr == NULL) return;
 
+    pthread_mutex_lock(&lock);
+
     block_t *block = (block_t*)((char*)ptr - sizeof(block_t));
 
-    // If the block size is out of range, call munmap to free the memory.
-    if (block->size > block_sizes[MAX_BLOCK_CLASSES - 1]) {
-        munmap(ptr, block->size + sizeof(block_t));
-        return;
-    }
 
     int class_index = get_block_class(block->size);
 
-    // Prioritize recovery to thread cache
-    if (cache_block_to_thread(class_index, block)) {
-        return;
+    if (class_index == -1) {
+        // Handle oversized block
+        remove_allocated_block(ptr);
+        munmap(block, block->size + sizeof(block_t));
+    } else if (!cache_block_to_thread(class_index, block)) { // Try to cache the block in the thread cache
+        // If thread cache is full, add the block back to the global free list
+        block->next = global_free_list[class_index];
+        global_free_list[class_index] = block;
     }
 
-    // If the thread cache is full, recycle to the global pool
-    block->next = global_free_list[class_index];
-    global_free_list[class_index] = block;
+    pthread_mutex_unlock(&lock);
 }
+
+// Function to check for memory leaks
+void check_memory_leaks() {
+    pthread_mutex_lock(&lock); // Lock to ensure thread safety
+
+    allocated_block_t* current = allocated_list;
+    while (current != NULL) {
+        fprintf(stderr, "Memory leak detected: pointer %p of size %u bytes\n", current->ptr, current->size);
+        current = current->next;
+    }
+
+    pthread_mutex_unlock(&lock); // Unlock, operation complete
+}
+

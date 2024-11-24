@@ -8,7 +8,7 @@ double calculate_time(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
-// Testing the performance of my_malloc/my_free
+// Test the performance of my_malloc/my_free
 void test_my_allocator_performance(int num_allocations,size_t allocation_size) {
     struct timespec start, end;
 
@@ -31,7 +31,7 @@ void test_my_allocator_performance(int num_allocations,size_t allocation_size) {
     printf("my_malloc/my_free: %d allocations of %zu bytes took %f seconds\n", num_allocations, allocation_size, time_spent);
 }
 
-// Testing the performance of malloc/free
+// Test the performance of malloc/free
 void test_system_allocator_performance(int num_allocations,size_t allocation_size) {
     struct timespec start, end;
 

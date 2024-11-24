@@ -4,40 +4,40 @@
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
-#include <stdint.h> // 使用 uintptr_t 以便进行指针算术
+#include <stdint.h> // Use uintptr_t for pointer arithmetic
 
-#define ALIGNMENT 16 // 定义内存对齐字节数（一般为 16 或 8，根据系统需求）
-#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1)) // 计算对齐后的大小
+#define ALIGNMENT 16 // Define the number of bytes for memory alignment (typically 16 or 8, depending on the system)
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1)) // Calculate the aligned size
 
-// 定义内存块头部结构，优化后的版本
-// 将 size 从 size_t 改为 uint32_t，以减少元数据占用内存
+// Define the structure for the memory block header (optimized version)
+// Changed size from size_t to uint32_t to reduce metadata overhead
 typedef struct block_header {
-    uint32_t size; // 块的大小，使用 uint32_t 以减少占用空间
+    uint32_t size; // Size of the block, using uint32_t to reduce space usage
 } block_header_t;
 
-// 定义空闲块结构
+// Define the structure for a free memory block
 typedef struct free_block {
-    uint32_t size; // 块的大小
-    struct free_block* next; // 指向下一个空闲块
+    uint32_t size; // Size of the block
+    struct free_block* next; // Pointer to the next free block
 } free_block_t;
 
-// 空闲链表的头指针，指向第一个空闲块
+// Pointer to the head of the free list, pointing to the first free block
 free_block_t* free_list = NULL;
 
-// 全局互斥锁，用于确保内存分配线程安全
+// Global mutex lock to ensure thread-safe memory allocation
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
-// 定义跟踪已分配内存的结构
+// Define the structure for tracking allocated memory
 typedef struct allocated_block {
-    void* ptr; // 指向已分配内存的指针
-    uint32_t size; // 分配的内存大小
-    struct allocated_block* next; // 指向下一个已分配块
+    void* ptr; // Pointer to the allocated memory
+    uint32_t size; // Size of the allocated memory
+    struct allocated_block* next; // Pointer to the next allocated block
 } allocated_block_t;
 
-// 已分配内存链表的头指针
+// Pointer to the head of the allocated memory list
 allocated_block_t* allocated_list = NULL;
 
-// 添加分配记录函数
+// Function to add an allocated block record
 void add_allocated_block(void* ptr, uint32_t size) {
     allocated_block_t* new_block = (allocated_block_t*)malloc(sizeof(allocated_block_t));
     if (new_block == NULL) {
@@ -50,7 +50,7 @@ void add_allocated_block(void* ptr, uint32_t size) {
     allocated_list = new_block;
 }
 
-// 删除分配记录函数
+// Function to remove an allocated block record
 void remove_allocated_block(void* ptr) {
     allocated_block_t** current = &allocated_list;
     while (*current != NULL) {
@@ -65,86 +65,86 @@ void remove_allocated_block(void* ptr) {
     fprintf(stderr, "Warning: Attempt to free untracked memory at %p\n", ptr);
 }
 
-// 自定义 malloc 函数，分配指定大小的内存
+// Custom malloc function to allocate memory of the specified size
 void* my_malloc(size_t size) {
-    pthread_mutex_lock(&lock); // 加锁，确保线程安全
+    pthread_mutex_lock(&lock); // Lock to ensure thread safety
 
-    // 计算总大小，包括块头和对齐所需的额外空间
+    // Calculate the total size, including block header and alignment padding
     size_t total_size = sizeof(block_header_t) + size + (ALIGNMENT - 1);
-    free_block_t* best_fit = NULL; // 用于存储找到的最优空闲块
-    free_block_t** best_fit_prev = NULL; // 用于记录最优块的前一个指针
-    free_block_t** current = &free_list; // 用于遍历空闲链表
+    free_block_t* best_fit = NULL; // Pointer to store the best fit free block
+    free_block_t** best_fit_prev = NULL; // Pointer to record the previous block of the best fit
+    free_block_t** current = &free_list; // Pointer to traverse the free list
 
-    // 在空闲链表中查找合适的内存块（最佳适配）
+    // Search for a suitable memory block in the free list (best-fit strategy)
     while (*current != NULL) {
         if ((*current)->size >= total_size) {
-            // 如果当前块满足要求，且比之前找到的最优块更小，则更新最优块
+            // Update the best-fit block if the current block is smaller and sufficient
             if (best_fit == NULL || (*current)->size < best_fit->size) {
                 best_fit = *current;
                 best_fit_prev = current;
             }
         }
-        current = &(*current)->next; // 继续遍历链表
+        current = &(*current)->next; // Move to the next block
     }
 
-    // 如果找到了合适的空闲块
+    // If a suitable block is found
     if (best_fit != NULL) {
-        *best_fit_prev = best_fit->next; // 从空闲链表中移除该块
-        pthread_mutex_unlock(&lock); // 解锁，操作完成
-        void* user_ptr = (void*)((char*)best_fit + sizeof(block_header_t)); // 返回指向用户数据部分的指针
-        add_allocated_block(user_ptr, best_fit->size); // 添加到分配跟踪列表
+        *best_fit_prev = best_fit->next; // Remove the block from the free list
+        pthread_mutex_unlock(&lock); // Unlock, operation complete
+        void* user_ptr = (void*)((char*)best_fit + sizeof(block_header_t)); // Return pointer to the user data section
+        add_allocated_block(user_ptr, best_fit->size); // Add to the allocated memory tracking list
         return user_ptr;
     }
 
-    // 如果没有找到合适的块，使用 mmap 分配新的内存
-    size_t page_size = sysconf(_SC_PAGESIZE); // 获取系统页大小
-    size_t alloc_size = (total_size + page_size - 1) & ~(page_size - 1); // 计算按页大小对齐的分配大小
-    void* ptr = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); // 使用 mmap 分配内存
+    // If no suitable block is found, allocate new memory using mmap
+    size_t page_size = sysconf(_SC_PAGESIZE); // Get the system page size
+    size_t alloc_size = (total_size + page_size - 1) & ~(page_size - 1); // Align allocation size to the page size
+    void* ptr = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); // Allocate memory with mmap
 
-    if (ptr == MAP_FAILED) { // 如果 mmap 失败，返回 NULL
+    if (ptr == MAP_FAILED) { // Check if mmap failed
         perror("mmap failed");
-        pthread_mutex_unlock(&lock); // 解锁
+        pthread_mutex_unlock(&lock); // Unlock
         return NULL;
     }
 
-    // 对齐指针地址，使其满足对齐要求
-    uintptr_t raw_address = (uintptr_t)ptr + sizeof(block_header_t); // 跳过块头部分
-    uintptr_t aligned_address = (raw_address + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1); // 计算对齐后的地址
+    // Align the pointer address to meet alignment requirements
+    uintptr_t raw_address = (uintptr_t)ptr + sizeof(block_header_t); // Skip the block header
+    uintptr_t aligned_address = (raw_address + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1); // Calculate the aligned address
 
-    // 存储块头信息，以记录分配大小
-    block_header_t* header = (block_header_t*)(aligned_address - sizeof(block_header_t)); // 获取块头指针
-    header->size = (uint32_t)alloc_size; // 存储块的总大小
+    // Store block header information to record the allocation size
+    block_header_t* header = (block_header_t*)(aligned_address - sizeof(block_header_t)); // Get the block header pointer
+    header->size = (uint32_t)alloc_size; // Store the total size of the block
 
     void* user_ptr = (void*)aligned_address;
-    add_allocated_block(user_ptr, (uint32_t)alloc_size); // 添加到分配跟踪列表
+    add_allocated_block(user_ptr, (uint32_t)alloc_size); // Add to the allocated memory tracking list
 
-    pthread_mutex_unlock(&lock); // 解锁，操作完成
-    return user_ptr; // 返回对齐后的指针
+    pthread_mutex_unlock(&lock); // Unlock, operation complete
+    return user_ptr; // Return the aligned pointer
 }
 
-// 自定义 free 函数，释放之前分配的内存
+// Custom free function to release previously allocated memory
 void my_free(void* ptr) {
-    if (ptr == NULL) return; // 如果传入的指针为 NULL，直接返回
-    pthread_mutex_lock(&lock); // 加锁，确保线程安全
+    if (ptr == NULL) return; // If the pointer is NULL, return immediately
+    pthread_mutex_lock(&lock); // Lock to ensure thread safety
 
-    // 获取块头信息，以找回块的起始地址
-    block_header_t* block_start = (block_header_t*)((char*)ptr - sizeof(block_header_t)); // 获取块头指针
-    uint32_t alloc_size = block_start->size; // 读取块的大小
+    // Retrieve block header information to find the start of the block
+    block_header_t* block_start = (block_header_t*)((char*)ptr - sizeof(block_header_t)); // Get the block header pointer
+    uint32_t alloc_size = block_start->size; // Read the size of the block
 
-    // 将释放的块插入到空闲链表的头部
-    free_block_t* new_block = (free_block_t*)block_start; // 创建新的空闲块结构
-    new_block->size = alloc_size; // 设置空闲块的大小
-    new_block->next = free_list; // 将其链接到空闲链表中
-    free_list = new_block; // 更新空闲链表的头指针
+    // Insert the released block at the head of the free list
+    free_block_t* new_block = (free_block_t*)block_start; // Create a new free block structure
+    new_block->size = alloc_size; // Set the size of the free block
+    new_block->next = free_list; // Link it to the free list
+    free_list = new_block; // Update the head pointer of the free list
 
-    remove_allocated_block(ptr); // 从已分配列表中移除
+    remove_allocated_block(ptr); // Remove from the allocated memory list
 
-    pthread_mutex_unlock(&lock); // 解锁，操作完成
+    pthread_mutex_unlock(&lock); // Unlock, operation complete
 }
 
-// 检测内存泄漏的函数
+// Function to check for memory leaks
 void check_memory_leaks() {
-    pthread_mutex_lock(&lock); // 加锁，确保线程安全
+    pthread_mutex_lock(&lock); // Lock to ensure thread safety
 
     allocated_block_t* current = allocated_list;
     while (current != NULL) {
@@ -152,6 +152,5 @@ void check_memory_leaks() {
         current = current->next;
     }
 
-    pthread_mutex_unlock(&lock); // 解锁，操作完成
+    pthread_mutex_unlock(&lock); // Unlock, operation complete
 }
-

@@ -1,2 +1,0 @@
-/usr/bin/ar qc libperf_cmp.a CMakeFiles/perf_cmp.dir/perf_cmp.c.o
-/usr/bin/ranlib libperf_cmp.a

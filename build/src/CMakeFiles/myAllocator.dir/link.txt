@@ -1,2 +1,0 @@
-/usr/bin/ar qc libmyAllocator.a CMakeFiles/myAllocator.dir/myAllocator.c.o
-/usr/bin/ranlib libmyAllocator.a

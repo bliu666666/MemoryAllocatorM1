@@ -117,6 +117,27 @@ static void test_memory_write(void **state) {
     my_free(data);
 }
 
+// Test coalescing of adjacent free blocks
+static void test_block_coalescing(void **state) {
+    size_t size1 = 128;
+    size_t size2 = 256;
+
+    void *ptr1 = my_malloc(size1);
+    void *ptr2 = my_malloc(size2);
+
+    assert_non_null(ptr1);
+    assert_non_null(ptr2);
+
+    my_free(ptr1);
+    my_free(ptr2);
+
+    // Allocate a larger block to test if adjacent blocks were coalesced
+    void *ptr3 = my_malloc(size1 + size2 + sizeof(block_t));
+    assert_non_null(ptr3);
+
+    my_free(ptr3);
+}
+
 // Define the test suite
 int main(void) {
     const struct CMUnitTest tests[] = {
@@ -128,6 +149,7 @@ int main(void) {
             cmocka_unit_test(test_my_malloc),
             cmocka_unit_test(test_my_free),
             cmocka_unit_test(test_memory_write),
+            cmocka_unit_test(test_block_coalescing),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

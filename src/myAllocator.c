@@ -12,6 +12,7 @@
 #define ALIGNMENT 16            // 内存对齐字节数
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1)) // 对齐大小
 #define ARENA_SIZE (PAGE_SIZE * 16) // 每个 Arena 的大小，可根据需要调整
+#define THREAD_CACHE_MAX_BLOCKS 64 // 每种块大小线程缓存的最大块数
 
 // 内存块结构
 typedef struct block {
@@ -30,6 +31,12 @@ typedef struct arena {
     struct arena* next;               // 下一个 Arena（用于支持多个 Arena）
 } arena_t;
 
+// 线程缓存结构
+typedef struct thread_cache {
+    block_t* free_list[MAX_BLOCK_CLASSES]; // 每种块大小的空闲链表
+    size_t block_count[MAX_BLOCK_CLASSES]; // 每种块大小的块计数
+} thread_cache_t;
+
 // 全局 Arena 列表，用于管理所有 Arena
 static arena_t* global_arena_list = NULL;
 static pthread_mutex_t global_arena_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -37,8 +44,9 @@ static pthread_mutex_t global_arena_lock = PTHREAD_MUTEX_INITIALIZER;
 // 定义块大小分类
 static const size_t block_sizes[MAX_BLOCK_CLASSES] = {8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
 
-// 线程本地变量，指向该线程的 Arena
+// 线程本地变量，指向该线程的 Arena和线程缓存
 __thread arena_t* thread_arena = NULL;
+__thread thread_cache_t thread_cache = {{NULL}, {0}};
 
 // 获取块分类索引
 static int get_block_class(size_t size) {
@@ -48,6 +56,14 @@ static int get_block_class(size_t size) {
         }
     }
     return MAX_BLOCK_CLASSES; // 超大块类别
+}
+
+// 初始化线程缓存
+void init_thread_cache() {
+    for (int i = 0; i < MAX_BLOCK_CLASSES; i++) {
+        thread_cache.free_list[i] = NULL;
+        thread_cache.block_count[i] = 0;
+    }
 }
 
 // 初始化 Arena
@@ -204,6 +220,30 @@ block_t* find_best_fit(arena_t* arena, size_t size, int class_index) {
     return NULL; // 未找到合适的块
 }
 
+// 从线程缓存分配内存
+static void* allocate_from_thread_cache(int class_index) {
+    if (thread_cache.free_list[class_index] != NULL) {
+        block_t* block = thread_cache.free_list[class_index];
+        thread_cache.free_list[class_index] = block->next;
+        thread_cache.block_count[class_index]--;
+        block->free = 0; // 设置为已分配
+        return (void*)((char*)block + sizeof(block_t));
+    }
+    return NULL;
+}
+
+// 将内存块回收到线程缓存
+static int cache_block_to_thread(int class_index, block_t* block) {
+    if (thread_cache.block_count[class_index] < THREAD_CACHE_MAX_BLOCKS) {
+        block->next = thread_cache.free_list[class_index];
+        thread_cache.free_list[class_index] = block;
+        thread_cache.block_count[class_index]++;
+        block->free = 1; // 设置为空闲
+        return 1;
+    }
+    return 0;
+}
+
 // 内存分配函数
 void* my_malloc(size_t size) {
     if (size == 0) {
@@ -216,6 +256,12 @@ void* my_malloc(size_t size) {
     arena_t* arena = get_thread_arena();
     if (!arena) {
         return NULL;
+    }
+
+    // 优先从线程缓存分配
+    void* ptr = allocate_from_thread_cache(class_index);
+    if (ptr != NULL) {
+        return ptr;
     }
 
     pthread_mutex_lock(&arena->lock);
@@ -256,9 +302,16 @@ void my_free(void* ptr) {
         return;
     }
 
+    block_t* block = (block_t*)((char*)ptr - sizeof(block_t));
+    int class_index = get_block_class(block->size);
+
+    // 优先回收到线程缓存
+    if (cache_block_to_thread(class_index, block)) {
+        return;
+    }
+
     pthread_mutex_lock(&arena->lock);
 
-    block_t* block = (block_t*)((char*)ptr - sizeof(block_t));
     block->free = 1;
 
     coalesce_blocks(arena, block);

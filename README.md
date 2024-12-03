@@ -97,4 +97,11 @@ Run the following command in the project root directory:
 
 ## Benchmark Results 
 
+The following are the performance comparison test results of the custom allocator and the system allocator (allocation 10,000 times, size range 16B ~ 2048B):
+
+| Test Name | Custom allocator (my_malloc/my_free) | System allocator (malloc/free) | Performance Improvement |
+|-----------|--------------------------------------|--------------------------------|-------------------------|
+|Single-threaded performance test| 0.001297 seconds                     | 0.001356 seconds               | 4.5%                    |
+|Multithreaded performance test (4 threads)| 0.003618 seconds                     | 0.004921 seconds               | 36%                     |
+
 ***
